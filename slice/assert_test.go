@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMapAny(t *testing.T) {
+func TestMapUint8ToInt(t *testing.T) {
 	tests := []struct {
 		name    string
 		src     any
@@ -18,18 +18,8 @@ func TestMapAny(t *testing.T) {
 			src:     []uint8{1, 2, 3},
 			wantRes: []int{1, 2, 3},
 			fn: func(src any) any {
-				return MapAny[int, uint8](src.([]uint8), func(src uint8) int {
+				return MapUint8ToIntV1(src.([]uint8), func(src uint8) int {
 					return int(src)
-				})
-			},
-		},
-		{
-			name:    "[]byte to string",
-			src:     [][]byte{[]byte("hi"), []byte("Hello world!")},
-			wantRes: []string{"hi", "Hello world!"},
-			fn: func(src any) any {
-				return MapAny[string, []byte](src.([][]byte), func(src []byte) string {
-					return string(src)
 				})
 			},
 		},
