@@ -1,10 +1,8 @@
 package zaputils
 
 import (
-	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 
 	"github.com/natefinch/lumberjack"
@@ -12,104 +10,131 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-type HookOption func(**lumberjack.Logger)
+type Hook struct {
+	*lumberjack.Logger
+	writers []io.Writer
+	enab    zapcore.LevelEnabler
+	encoder zapcore.EncoderConfig
+}
+
+type HookOption func(*Hook)
 
 func WithHookMaxsize(size int) HookOption {
-	return func(logger **lumberjack.Logger) {
-		(*logger).MaxSize = size
+	return func(hook *Hook) {
+		hook.Logger.MaxSize = size
 	}
 }
 
 func WithHookMaxBackups(num int) HookOption {
-	return func(logger **lumberjack.Logger) {
-		(*logger).MaxBackups = num
+	return func(hook *Hook) {
+		hook.Logger.MaxBackups = num
 	}
 }
 
 func WithHookMaxAge(age int) HookOption {
-	return func(logger **lumberjack.Logger) {
-		(*logger).MaxAge = age
+	return func(hook *Hook) {
+		hook.Logger.MaxAge = age
 	}
 }
 
-func WithHookNew(hook *lumberjack.Logger) HookOption {
-	return func(logger **lumberjack.Logger) {
-		if hook != nil {
-			*logger = hook
+func WithHookJackLogger(logger *lumberjack.Logger) HookOption {
+	return func(hook *Hook) {
+		if logger != nil {
+			hook.Logger = logger
 		}
 	}
 }
 
-func NewZapLogCore(logPath string, isStdout bool, enab zapcore.LevelEnabler, opts ...HookOption) (core zapcore.Core) {
-	hook := &lumberjack.Logger{
-		Filename:   filepath.Join(logPath, filepath.Base(logPath)+".log"), // 日志文件路径，默认 os.TempDir()
-		MaxSize:    200,                                                   // 每个日志文件保存10M，默认 100M
-		MaxBackups: 10,                                                    // 保留30个备份，默认不限
-		MaxAge:     10,                                                    // 保留7天，默认不限
-		Compress:   true,                                                  // 是否压缩，默认不压缩
-		LocalTime:  true,
+func WithHookJackLoggerNil() HookOption {
+	return func(hook *Hook) {
+		hook.Logger = nil
+	}
+}
+
+func WithHookWriters(writers []io.Writer) HookOption {
+	return func(hook *Hook) {
+		hook.writers = writers
+	}
+}
+
+func WithHookLevelEnab(enab zapcore.LevelEnabler) HookOption {
+	return func(hook *Hook) {
+		hook.enab = enab
+	}
+}
+
+func WithHookEncoder(encoder zapcore.EncoderConfig) HookOption {
+	return func(hook *Hook) {
+		hook.encoder = encoder
+	}
+}
+
+func NewHook(logPath string, opts ...HookOption) *Hook {
+	if logPath == "" {
+		logPath = "log"
+	}
+
+	res := &Hook{
+		Logger: &lumberjack.Logger{
+			Filename:   filepath.Join(logPath, filepath.Base(logPath)+".log"), // 日志文件路径，默认 os.TempDir()
+			MaxSize:    200,                                                   // 每个日志文件保存10M，默认 200M
+			MaxBackups: 10,                                                    // 保留10个备份，默认不限
+			MaxAge:     10,                                                    // 保留10天，默认不限
+			Compress:   true,                                                  // 是否压缩，默认不压缩
+			LocalTime:  true,
+		},
+		enab: zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
+			return lev >= zap.DebugLevel
+		}),
+		encoder: zap.NewDevelopmentEncoderConfig(),
 	}
 
 	for _, opt := range opts {
-		opt(&hook)
+		opt(res)
 	}
 
-	writes := []zapcore.WriteSyncer{zapcore.AddSync(hook)}
+	return res
+}
 
-	if isStdout {
-		writes = append(writes, zapcore.AddSync(os.Stdout))
+func NewZapLogCore(logPath string, opts ...HookOption) (core zapcore.Core, writer io.Writer) {
+
+	hook := NewHook(logPath, opts...)
+
+	var writers []zapcore.WriteSyncer
+	if hook.Logger != nil {
+		writers = []zapcore.WriteSyncer{zapcore.AddSync(hook.Logger)}
 	}
 
-	consoleEncoder := zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig())
+	for _, ws := range hook.writers {
+		writers = append(writers, zapcore.AddSync(ws))
+	}
+
+	consoleEncoder := zapcore.NewConsoleEncoder(hook.encoder)
+
+	writer = zapcore.NewMultiWriteSyncer(writers...)
 
 	// 设置日志级别
 	return zapcore.NewCore(
 		consoleEncoder,
-		zapcore.NewMultiWriteSyncer(writes...),
-		enab,
-	)
+		zapcore.NewMultiWriteSyncer(writers...),
+		hook.enab,
+	), writer
 }
 
-func NewZapLogCoreEx(logPath string, isStdout, isColor bool, hook *lumberjack.Logger, enab zapcore.LevelEnabler) (core zapcore.Core, writer io.Writer) {
-	base := path.Base(logPath)
-
-	if hook == nil {
-		hook = &lumberjack.Logger{
-			Filename:   logPath + fmt.Sprintf("/%v.log", base), // 日志文件路径，默认 os.TempDir()
-			MaxSize:    100,                                    // 每个日志文件保存10M，默认 100M
-			MaxBackups: 30,                                     // 保留30个备份，默认不限
-			MaxAge:     0,                                      // 保留7天，默认不限
-			Compress:   true,                                   // 是否压缩，默认不压缩
-			LocalTime:  true,
-		}
-	}
-
-	writes := []zapcore.WriteSyncer{zapcore.AddSync(hook)}
-
-	if isStdout {
-		writes = append(writes, zapcore.AddSync(os.Stdout))
-	}
-
-	consoleConfig := zap.NewDevelopmentEncoderConfig()
-
-	if isColor {
-		consoleConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-	}
-
-	consoleEncoder := zapcore.NewConsoleEncoder(consoleConfig)
-
-	writers := zapcore.NewMultiWriteSyncer(writes...)
-
-	// 设置日志级别
-	return zapcore.NewCore(
-		consoleEncoder,
-		writers,
-		enab,
-	), writers
+func NewZapStdoutCore(opts ...HookOption) (core zapcore.Core, writer io.Writer) {
+	opts = append(opts, WithHookWriters([]io.Writer{
+		os.Stdout,
+	}), WithHookJackLoggerNil())
+	return NewZapLogCore("", opts...)
 }
 
-func NewZapLog(logPath string, isStdout bool, enab zapcore.LevelEnabler, opts ...HookOption) (logger *zap.Logger) {
-	core := NewZapLogCore(logPath, isStdout, enab, opts...)
+func NewZapLog(logPath string, opts ...HookOption) (logger *zap.Logger) {
+	logger, _ = NewZapLogExt(logPath, opts...)
+	return logger
+}
 
-	return zap.New(core, zap.AddCaller())
+func NewZapLogExt(logPath string, opts ...HookOption) (logger *zap.Logger, writer io.Writer) {
+	core, writer := NewZapLogCore(logPath, opts...)
+
+	return zap.New(core, zap.AddCaller()), writer
 }
