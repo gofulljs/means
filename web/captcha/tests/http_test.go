@@ -14,6 +14,6 @@ func TestCaptchaHttp(t *testing.T) {
 	})
 
 	mux.Handle("/captcha/", http.StripPrefix("/captcha", captcha.NewMgr(captcha.WithPrefix("/"))))
-	fmt.Println("handle at :8088")
-	http.ListenAndServe(":8088", mux)
+	fmt.Println("handle at :8080")
+	http.ListenAndServe(":8080", mux)
 }
