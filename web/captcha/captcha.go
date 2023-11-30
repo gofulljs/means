@@ -13,10 +13,11 @@ import (
 
 type Mgr struct {
 	*http.ServeMux
-	length int
-	prefix string
-	width  int
-	height int
+	length  int
+	prefix  string
+	width   int
+	height  int
+	mRouter map[string]http.HandlerFunc
 }
 
 type Options func(mgr *Mgr)
@@ -57,19 +58,28 @@ func NewMgr(opts ...Options) *Mgr {
 		length:   4,
 		width:    captcha.StdWidth,
 		height:   captcha.StdHeight,
+		mRouter:  make(map[string]http.HandlerFunc),
 	}
 
 	for _, opt := range opts {
 		opt(res)
 	}
 
+	res.addRouters()
 	res.handler()
-
 	return res
 }
 
-func (mgr *Mgr) handler() {
-	mgr.HandleFunc(mgr.prefix+"/getinfo", func(writer http.ResponseWriter, request *http.Request) {
+func (mgr *Mgr) GetRouters() map[string]http.HandlerFunc {
+	return mgr.mRouter
+}
+
+func (mgr *Mgr) AddRouter(relativePath string, handlerFunc http.HandlerFunc) {
+	mgr.mRouter[relativePath] = handlerFunc
+}
+
+func (mgr *Mgr) addRouters() {
+	mgr.AddRouter(mgr.prefix+"/getinfo", func(writer http.ResponseWriter, request *http.Request) {
 		captchaId := captcha.NewLen(mgr.length)
 		prefixURL := strings.TrimSuffix(request.RequestURI, "/getinfo")
 		res, err := json.Marshal(map[string]any{
@@ -84,7 +94,8 @@ func (mgr *Mgr) handler() {
 		writer.WriteHeader(http.StatusOK)
 		writer.Write(res)
 	})
-	mgr.HandleFunc(mgr.prefix+"/image", func(w http.ResponseWriter, r *http.Request) {
+
+	mgr.AddRouter(mgr.prefix+"/image", func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
 		file := r.Form.Get("file")
 		ext := path.Ext(file)
@@ -104,7 +115,7 @@ func (mgr *Mgr) handler() {
 			http.NotFound(w, r)
 		}
 	})
-	mgr.HandleFunc(mgr.prefix+"/verify", func(w http.ResponseWriter, r *http.Request) {
+	mgr.AddRouter(mgr.prefix+"/verify", func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
 		id := r.Form.Get("id")
 		value := r.Form.Get("value")
@@ -120,6 +131,12 @@ func (mgr *Mgr) handler() {
 			fmt.Fprintf(w, "failed")
 		}
 	})
+}
+
+func (mgr *Mgr) handler() {
+	for relativePath, handlerFunc := range mgr.mRouter {
+		mgr.HandleFunc(relativePath, handlerFunc)
+	}
 }
 
 func Serve(w http.ResponseWriter, r *http.Request, id, ext, lang string, download bool, width, height int) error {
