@@ -91,6 +91,7 @@ func (mgr *Mgr) addRouters() {
 			writer.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 		writer.WriteHeader(http.StatusOK)
 		writer.Write(res)
 	})
